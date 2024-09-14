@@ -167,6 +167,7 @@ class Window:
         self.pos_offset[0] += move_x * self.camera_speed
         self.pos_offset[1] += move_y * self.camera_speed
 
+    '''
     def render(self, grid) -> None:
         """
         Render a red pixel in the top-left corner.
@@ -183,15 +184,62 @@ class Window:
 
         color_array = TILES_COLOUR_LOOKUP[grid]
 
-        # Clear the screen with a black background
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        # Specify the color format and data
-        gl.glRasterPos2i(0, 0)  # Position to start drawing the pixel
+        gl.glRasterPos2i(0, 0)
         gl.glDrawPixels(array_height, array_width, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+
+        glfw.swap_buffers(self.window)
+    '''
+    def render(self, grid) -> None:
+        """
+        Render the pixel grid using textures.
+        """
+        # Prepare the color array
+        array_height, array_width = grid.shape
+
+        color_array = TILES_COLOUR_LOOKUP[grid]
+
+        # Bind texture and upload color data
+        if not hasattr(self, 'texture'):
+            self.texture = gl.glGenTextures(1)
+
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+
+        # Set texture parameters
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+
+        # Upload the color array as texture data (assuming color_array is RGB)
+        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, array_width, array_height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+
+        # Clear the screen
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+
+        gl.glEnable(gl.GL_TEXTURE_2D)  # Enable texture mapping
+        gl.glBegin(gl.GL_QUADS)
+        gl.glTexCoord2f(0.0, 0.0)  # Texture coordinate for bottom-left
+        gl.glVertex2f(0.0, 0.0)  # Vertex position for bottom-left
+
+        gl.glTexCoord2f(1.0, 0.0)  # Texture coordinate for bottom-right
+        gl.glVertex2f(self.screen_width, 0.0)  # Vertex position for bottom-right
+
+        gl.glTexCoord2f(1.0, 1.0)  # Texture coordinate for top-right
+        gl.glVertex2f(self.screen_width, self.screen_height)  # Vertex position for top-right
+
+        gl.glTexCoord2f(0.0, 1.0)  # Texture coordinate for top-left
+        gl.glVertex2f(0.0, self.screen_height)  # Vertex position for top-left
+        gl.glEnd()
+        gl.glDisable(gl.GL_TEXTURE_2D)  # Disable texture mapping
 
         # Swap buffers to display the rendered frame
         glfw.swap_buffers(self.window)
+
+        # Unbind the texture
+        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
 
     def tick(self) -> None:
         """
