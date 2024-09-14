@@ -73,6 +73,38 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
     
     return cropped_array
 
+### DEBUGGING ###
+class FrameRateMonitor:
+    def __init__(self, name=""):
+        self.frame_times = []
+        self.last_update_time = None
+        self.name = name
+
+        self.total_elapsed = 0
+
+    def print_fps(self):
+        fps = len(self.frame_times) / self.total_elapsed
+        print(f"[{self.name}] FPS: {round(fps, 3)} LOW: {round(len(self.frame_times) / (max(self.frame_times) * len(self.frame_times)), 3)} HIGH: {round(len(self.frame_times) / (min(self.frame_times) * len(self.frame_times)), 3)}")
+
+        self.frame_times = []
+        self.total_elapsed = 0
+
+    def run(self):
+        current_time = time.time()
+
+        if self.last_update_time == None:
+            self.last_update_time = current_time
+            return
+
+        elapsed = current_time - self.last_update_time
+        self.last_update_time = current_time
+        self.total_elapsed += elapsed
+        self.frame_times.append(elapsed)
+
+        if self.total_elapsed > 1:
+            self.print_fps()
+
+
 ### Rendering [main thread] ###
 class Window:
     def __init__(self, simulation) -> None:
@@ -117,6 +149,22 @@ class Window:
         
         gl.glMatrixMode(gl.GL_MODELVIEW)
         gl.glLoadIdentity()
+
+        self.texture = gl.glGenTextures(1)
+
+        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
+
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
+        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
+
+        gl.glEnable(gl.GL_TEXTURE_2D)
+
+        gl.glDisable(gl.GL_DEPTH_TEST)
+        gl.glDisable(gl.GL_BLEND)
+
+        self.fps_monitor = FrameRateMonitor("WINDOW")
 
     def resize_grid_surface(self, zoom): # IGNORE
         width, height = self.original_size
@@ -166,86 +214,45 @@ class Window:
 
         self.pos_offset[0] += move_x * self.camera_speed
         self.pos_offset[1] += move_y * self.camera_speed
-
-    '''
-    def render(self, grid) -> None:
-        """
-        Render a red pixel in the top-left corner.
-        """
-        array_width, array_height = grid.shape
-        resize_width, resize_height = self.current_size
-
-        zoom_x = resize_width / array_width
-        zoom_y = resize_height / array_height
-
-        #resized_grid = scipy.ndimage.zoom(grid, (zoom_x, zoom_y), order=0)
-        #resized_grid = np.clip(resized_grid, 0, TILES_COLOUR_LOOKUP.shape[0] - 1).astype(int)
-        #resized_grid = crop_array(resized_grid, (0, 0), self.current_size)
-
-        color_array = TILES_COLOUR_LOOKUP[grid]
-
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
-
-        gl.glRasterPos2i(0, 0)
-        gl.glDrawPixels(array_height, array_width, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
-
-        glfw.swap_buffers(self.window)
-    '''
-    def render(self, grid) -> None:
+    
+    def render_new(self, grid) -> None:
         """
         Render the pixel grid using textures.
         """
-        # Prepare the color array
         array_height, array_width = grid.shape
 
         color_array = TILES_COLOUR_LOOKUP[grid]
 
-        # Bind texture and upload color data
-        if not hasattr(self, 'texture'):
-            self.texture = gl.glGenTextures(1)
-
-        gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
-
-        # Set texture parameters
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_CLAMP_TO_EDGE)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-
-        # Upload the color array as texture data (assuming color_array is RGB)
+        # Update texture
         gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, array_width, array_height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
 
-        # Clear the screen
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        gl.glEnable(gl.GL_TEXTURE_2D)  # Enable texture mapping
         gl.glBegin(gl.GL_QUADS)
-        gl.glTexCoord2f(0.0, 0.0)  # Texture coordinate for bottom-left
-        gl.glVertex2f(0.0, 0.0)  # Vertex position for bottom-left
+        gl.glTexCoord2f(0.0, 0.0)
+        gl.glVertex2f(0.0, 0.0)
 
-        gl.glTexCoord2f(1.0, 0.0)  # Texture coordinate for bottom-right
-        gl.glVertex2f(self.screen_width, 0.0)  # Vertex position for bottom-right
+        gl.glTexCoord2f(1.0, 0.0)
+        gl.glVertex2f(self.screen_width, 0.0)
 
-        gl.glTexCoord2f(1.0, 1.0)  # Texture coordinate for top-right
-        gl.glVertex2f(self.screen_width, self.screen_height)  # Vertex position for top-right
+        gl.glTexCoord2f(1.0, 1.0)
+        gl.glVertex2f(self.screen_width, self.screen_height)
 
-        gl.glTexCoord2f(0.0, 1.0)  # Texture coordinate for top-left
-        gl.glVertex2f(0.0, self.screen_height)  # Vertex position for top-left
+        gl.glTexCoord2f(0.0, 1.0)
+        gl.glVertex2f(0.0, self.screen_height)
         gl.glEnd()
-        gl.glDisable(gl.GL_TEXTURE_2D)  # Disable texture mapping
 
-        # Swap buffers to display the rendered frame
         glfw.swap_buffers(self.window)
 
-        # Unbind the texture
-        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-
+        #gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
     def tick(self) -> None:
         """
         Tick (manage frame rate).
         """
         glfw.poll_events()
+
+        self.fps_monitor.run()
 
     def close(self) -> None:
         """
@@ -286,6 +293,8 @@ class Simulation:
 
             self.grid = np.zeros(self.grid_dimensions, dtype=np.uint8)
 
+            self.fps_monitor = FrameRateMonitor("SIMULATION")
+
     def randomize(self):
         with self.lock:
             self.grid = np.random.randint(0, 2, size=self.grid_dimensions, dtype=np.uint8)
@@ -317,6 +326,8 @@ class Simulation:
 
             if self.events["exit"].is_set():
                 self.running = False
+
+            #self.fps_monitor.run()
 
             #time.sleep(0)
 
