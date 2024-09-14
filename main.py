@@ -28,7 +28,7 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-GRID_DIMENSIONS = (1080, 1920)
+GRID_DIMENSIONS = (108, 192)
 
 class Tile:
     def __init__(self, name, colour):
