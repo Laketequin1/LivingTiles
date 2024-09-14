@@ -215,7 +215,7 @@ class Window:
         self.pos_offset[0] += move_x * self.camera_speed
         self.pos_offset[1] += move_y * self.camera_speed
     
-    def render_new(self, grid) -> None:
+    def render(self, grid) -> None:
         """
         Render the pixel grid using textures.
         """
