@@ -1,5 +1,8 @@
 ### Imports ###
 import os
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = 'hide'
+
+import pygame
 import win32api
 import win32con
 import threading
@@ -12,12 +15,6 @@ import numpy as np
 import scipy
 import skimage
 import cupy as cp
-
-import glfw
-import OpenGL.GL as gl
-import numpy as np
-import math
-import scipy.ndimage
 
 from src import COLOURS
 
@@ -77,52 +74,46 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
 class Window:
     def __init__(self, simulation) -> None:
         self.simulation = simulation
+
         self.running = True
+        self.clock = pygame.time.Clock()
 
-        # Initialize glfw
-        if not glfw.init():
-            raise Exception("glfw can't be initialized")
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.NOFRAME)
 
-        self.screen_width = 800
-        self.screen_height = 600
+        pygame.display.set_caption("Living Tiles")
 
-        # Create the OpenGL window
-        self.window = glfw.create_window(self.screen_width, self.screen_height, "Living Tiles", None, None)
-        if not self.window:
-            glfw.terminate()
-            raise Exception("glfw window can't be created")
+        #self.grid_surface = pygame.Surface(GRID_DIMENSIONS)
 
-        glfw.set_window_pos(self.window, 100, 100)
-        glfw.make_context_current(self.window)
-
-        # Set aspect ratio
         self.ASPECT_RATIO = GRID_DIMENSIONS[0] / GRID_DIMENSIONS[1]
 
-        if self.screen_height / self.screen_width >= self.ASPECT_RATIO:
-            new_height = self.screen_height
+        if SCREEN_HEIGHT / SCREEN_HEIGHT >= self.ASPECT_RATIO:
+            new_height = SCREEN_HEIGHT
             new_width = int(new_height * self.ASPECT_RATIO)
-            offset_x = (self.screen_width - new_width) // 2
+            offset_x = (SCREEN_WIDTH - new_width) // 2
             offset_y = 0
         else:
-            new_width = self.screen_width
+            new_width = SCREEN_WIDTH
             new_height = int(new_width / self.ASPECT_RATIO)
             offset_x = 0
-            offset_y = (self.screen_height - new_height) // 2
+            offset_y = (SCREEN_HEIGHT - new_height) // 2
 
-        self.original_size = np.array([new_width, new_height])
-        self.current_size = self.original_size
+        self.origional_size = np.array([new_width, new_height])
+        self.current_size = self.origional_size
         self.home_offset = np.array((offset_x, offset_y))
+
+        self.grid_surface = pygame.Surface(self.origional_size)
 
         self.pos_offset = np.array([0, 0])
         self.camera_speed = 20
+
         self.zoom = 1
         self.zoom_multi = 1.2
 
     def resize_grid_surface(self, zoom):
-        width, height = self.original_size
+        width, height = self.origional_size
 
-        new_width = max(min(round(width * zoom), self.screen_width), 20)
-        new_height = max(min(round(height * zoom), self.screen_height), 20)
+        new_width = max(min(round(width * zoom), SCREEN_WIDTH), 20)
+        new_height = max(min(round(height * zoom), SCREEN_HEIGHT), 20)
 
         if new_width / new_height > self.ASPECT_RATIO:
             new_width = round(new_height * self.ASPECT_RATIO)
@@ -131,29 +122,29 @@ class Window:
 
         if new_width != self.current_size[0] or new_height != self.current_size[1]:
             self.current_size = (new_width, new_height)
+            self.grid_surface = pygame.Surface(self.current_size)
 
     def handle_window_events(self) -> None:
         """
-        Handle GLFW events, like key presses and closing the window.
-        """
-        if glfw.window_should_close(self.window):
-            self.close()
-            return
-
+        Handles pygame events, closes the window.
+        """        
+        keys_pressed = pygame.key.get_pressed()
         move_x, move_y = 0, 0
-        if glfw.get_key(self.window, glfw.KEY_W) == glfw.PRESS:
-            move_y -= 1
-        if glfw.get_key(self.window, glfw.KEY_S) == glfw.PRESS:
-            move_y += 1
-        if glfw.get_key(self.window, glfw.KEY_A) == glfw.PRESS:
-            move_x -= 1
-        if glfw.get_key(self.window, glfw.KEY_D) == glfw.PRESS:
-            move_x += 1
 
+        if keys_pressed[pygame.K_w]:
+            move_y -= 1
+        if keys_pressed[pygame.K_s]:
+            move_y += 1
+        if keys_pressed[pygame.K_a]:
+            move_x -= 1
+        if keys_pressed[pygame.K_d]:
+            move_x += 1
+        
         prev_zoom = self.zoom
-        if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
+
+        if keys_pressed[pygame.K_q]:
             self.zoom *= self.zoom_multi
-        if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
+        if keys_pressed[pygame.K_e]:
             self.zoom /= self.zoom_multi
 
         if self.zoom != prev_zoom:
@@ -167,11 +158,18 @@ class Window:
         self.pos_offset[0] += move_x * self.camera_speed
         self.pos_offset[1] += move_y * self.camera_speed
 
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.close()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    self.close()
+
     def render(self, grid) -> None:
         """
-        Render the tiles using OpenGL.
+        Renders the tiles.
         """
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
+        self.screen.fill(COLOURS.DARKGRAY)
 
         array_width, array_height = grid.shape
         resize_width, resize_height = self.current_size
@@ -180,75 +178,44 @@ class Window:
         zoom_y = resize_height / array_height
 
         resized_grid = scipy.ndimage.zoom(grid, (zoom_x, zoom_y), order=0)
+        #resized_grid = np.clip(resized_grid, 0, TILES_COLOUR_LOOKUP.shape[0] - 1).astype(int)
+        #resized_grid = crop_array(resized_grid, (0, 0), self.current_size)
+
         color_array = TILES_COLOUR_LOOKUP[resized_grid]
 
-        # Ensure color_array is in the right format (e.g., RGB or RGBA)
-        color_array = np.ascontiguousarray(color_array)
+        print(color_array.shape)
+        print(self.current_size)
 
-        # Generate texture
-        texture = gl.glGenTextures(1)
-        gl.glBindTexture(gl.GL_TEXTURE_2D, texture)
-
-        # Set texture parameters
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_NEAREST)
-        gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_NEAREST)
-
-        # Upload the texture data
-        gl.glTexImage2D(
-            gl.GL_TEXTURE_2D, 0, gl.GL_RGBA,
-            color_array.shape[1], color_array.shape[0], 0,
-            gl.GL_RGBA, gl.GL_UNSIGNED_BYTE, color_array
-        )
-
-        # Draw a quad that spans the screen, with the texture applied
-        gl.glBegin(gl.GL_QUADS)
+        pygame.surfarray.blit_array(self.grid_surface, color_array)
+        #pygame.transform.scale(self.grid_surface, self.current_size * 2, self.grid_surface)
+        self.screen.blit(self.grid_surface, self.home_offset + self.pos_offset)
         
-        # Top-left
-        gl.glTexCoord2f(0.0, 1.0)
-        gl.glVertex2f(-1.0, 1.0)
-
-        # Bottom-left
-        gl.glTexCoord2f(0.0, 0.0)
-        gl.glVertex2f(-1.0, -1.0)
-
-        # Bottom-right
-        gl.glTexCoord2f(1.0, 0.0)
-        gl.glVertex2f(1.0, -1.0)
-
-        # Top-right
-        gl.glTexCoord2f(1.0, 1.0)
-        gl.glVertex2f(1.0, 1.0)
-
-        gl.glEnd()
-
-        # Unbind the texture
-        gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-
-        # Swap the buffers to display the rendered image
-        glfw.swap_buffers(self.window)
+        pygame.display.flip()
 
     def tick(self) -> None:
         """
-        Tick (manage frame rate).
+        Tick
         """
-        glfw.poll_events()
+        self.clock.tick(FPS)
 
     def close(self) -> None:
         """
-        Close the GLFW window and terminate.
+        Close the pygame window, and end the loop
         """
         self.running = False
         self.simulation.quit()
-        glfw.terminate()
+        pygame.quit()
 
     def main(self) -> None:
         """
-        Main window loop.
+        Main window loop
         """
         while self.running:
             grid = self.simulation.get_grid()
+
             self.render(grid)
             self.tick()
+
             self.handle_window_events()
 
 

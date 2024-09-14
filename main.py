@@ -1,8 +1,5 @@
 ### Imports ###
 import os
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = 'hide'
-
-import pygame
 import win32api
 import win32con
 import threading
@@ -16,6 +13,12 @@ import scipy
 import skimage
 import cupy as cp
 
+import glfw
+import OpenGL.GL as gl
+import numpy as np
+import math
+import scipy.ndimage
+
 from src import COLOURS
 
 ### Constants ###
@@ -25,7 +28,7 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-GRID_DIMENSIONS = (2000, 2000)
+GRID_DIMENSIONS = (1080, 1920)
 
 class Tile:
     def __init__(self, name, colour):
@@ -73,47 +76,53 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
 ### Rendering [main thread] ###
 class Window:
     def __init__(self, simulation) -> None:
+        if not glfw.init():
+            raise Exception("GLFW can't be initialized")
+        
+        self.monitor = glfw.get_primary_monitor()
+        if not self.monitor:
+            raise Exception("GLFW can't find primary monitor")
+
+        self.video_mode = glfw.get_video_mode(self.monitor)
+        if not self.video_mode:
+            raise Exception("GLFW can't get video mode")
+        
+        self.screen_width = self.video_mode.size.width
+        self.screen_height = self.video_mode.size.height
+
         self.simulation = simulation
-
         self.running = True
-        self.clock = pygame.time.Clock()
-
-        self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.NOFRAME)
-
-        pygame.display.set_caption("Living Tiles")
-
-        #self.grid_surface = pygame.Surface(GRID_DIMENSIONS)
-
+        
         self.ASPECT_RATIO = GRID_DIMENSIONS[0] / GRID_DIMENSIONS[1]
-
-        if SCREEN_HEIGHT / SCREEN_HEIGHT >= self.ASPECT_RATIO:
-            new_height = SCREEN_HEIGHT
-            new_width = int(new_height * self.ASPECT_RATIO)
-            offset_x = (SCREEN_WIDTH - new_width) // 2
-            offset_y = 0
-        else:
-            new_width = SCREEN_WIDTH
-            new_height = int(new_width / self.ASPECT_RATIO)
-            offset_x = 0
-            offset_y = (SCREEN_HEIGHT - new_height) // 2
-
-        self.origional_size = np.array([new_width, new_height])
-        self.current_size = self.origional_size
-        self.home_offset = np.array((offset_x, offset_y))
-
-        self.grid_surface = pygame.Surface(self.origional_size)
-
+        self.original_size = np.array([self.screen_width, self.screen_height])
+        self.current_size = self.original_size
+        self.home_offset = np.array([0, 0])
         self.pos_offset = np.array([0, 0])
         self.camera_speed = 20
-
         self.zoom = 1
         self.zoom_multi = 1.2
 
-    def resize_grid_surface(self, zoom):
-        width, height = self.origional_size
+        self.window = glfw.create_window(self.screen_width, self.screen_height, "Living Tiles", self.monitor, None)
+        if not self.window:
+            glfw.terminate()
+            raise Exception("GLFW window can't be created")
+        
+        glfw.make_context_current(self.window)
 
-        new_width = max(min(round(width * zoom), SCREEN_WIDTH), 20)
-        new_height = max(min(round(height * zoom), SCREEN_HEIGHT), 20)
+        gl.glViewport(0, 0, self.screen_width, self.screen_height)
+        
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        gl.glOrtho(0, self.screen_width, 0, self.screen_height, -1, 1)
+        
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glLoadIdentity()
+
+    def resize_grid_surface(self, zoom): # IGNORE
+        width, height = self.original_size
+
+        new_width = max(min(round(width * zoom), self.screen_width), 20)
+        new_height = max(min(round(height * zoom), self.screen_height), 20)
 
         if new_width / new_height > self.ASPECT_RATIO:
             new_width = round(new_height * self.ASPECT_RATIO)
@@ -122,29 +131,29 @@ class Window:
 
         if new_width != self.current_size[0] or new_height != self.current_size[1]:
             self.current_size = (new_width, new_height)
-            self.grid_surface = pygame.Surface(self.current_size)
 
     def handle_window_events(self) -> None:
         """
-        Handles pygame events, closes the window.
-        """        
-        keys_pressed = pygame.key.get_pressed()
+        Handle GLFW events, like key presses and closing the window.
+        """
+        if glfw.window_should_close(self.window) or glfw.get_key(self.window, glfw.KEY_ESCAPE) == glfw.PRESS:
+            self.close()
+            return
+
         move_x, move_y = 0, 0
-
-        if keys_pressed[pygame.K_w]:
+        if glfw.get_key(self.window, glfw.KEY_W) == glfw.PRESS:
             move_y -= 1
-        if keys_pressed[pygame.K_s]:
+        if glfw.get_key(self.window, glfw.KEY_S) == glfw.PRESS:
             move_y += 1
-        if keys_pressed[pygame.K_a]:
+        if glfw.get_key(self.window, glfw.KEY_A) == glfw.PRESS:
             move_x -= 1
-        if keys_pressed[pygame.K_d]:
+        if glfw.get_key(self.window, glfw.KEY_D) == glfw.PRESS:
             move_x += 1
-        
-        prev_zoom = self.zoom
 
-        if keys_pressed[pygame.K_q]:
+        prev_zoom = self.zoom
+        if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
             self.zoom *= self.zoom_multi
-        if keys_pressed[pygame.K_e]:
+        if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
             self.zoom /= self.zoom_multi
 
         if self.zoom != prev_zoom:
@@ -158,64 +167,61 @@ class Window:
         self.pos_offset[0] += move_x * self.camera_speed
         self.pos_offset[1] += move_y * self.camera_speed
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.close()
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    self.close()
-
     def render(self, grid) -> None:
         """
-        Renders the tiles.
+        Render a red pixel in the top-left corner.
         """
-        self.screen.fill(COLOURS.DARKGRAY)
-
         array_width, array_height = grid.shape
         resize_width, resize_height = self.current_size
 
         zoom_x = resize_width / array_width
         zoom_y = resize_height / array_height
 
-        resized_grid = scipy.ndimage.zoom(grid, (zoom_x, zoom_y), order=0)
+        #resized_grid = scipy.ndimage.zoom(grid, (zoom_x, zoom_y), order=0)
         #resized_grid = np.clip(resized_grid, 0, TILES_COLOUR_LOOKUP.shape[0] - 1).astype(int)
         #resized_grid = crop_array(resized_grid, (0, 0), self.current_size)
 
-        color_array = TILES_COLOUR_LOOKUP[resized_grid]
+        color_array = TILES_COLOUR_LOOKUP[grid]
 
-        print(color_array.shape)
-        print(self.current_size)
+        # Clear the screen with a black background
+        gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        pygame.surfarray.blit_array(self.grid_surface, color_array)
-        #pygame.transform.scale(self.grid_surface, self.current_size * 2, self.grid_surface)
-        self.screen.blit(self.grid_surface, self.home_offset + self.pos_offset)
-        
-        pygame.display.flip()
+        # Specify the color format and data
+        gl.glRasterPos2i(0, 0)  # Position to start drawing the pixel
+        gl.glDrawPixels(array_height, array_width, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+
+        # Swap buffers to display the rendered frame
+        glfw.swap_buffers(self.window)
 
     def tick(self) -> None:
         """
-        Tick
+        Tick (manage frame rate).
         """
-        self.clock.tick(FPS)
+        glfw.poll_events()
 
     def close(self) -> None:
         """
-        Close the pygame window, and end the loop
+        Close the GLFW window and terminate.
         """
         self.running = False
         self.simulation.quit()
-        pygame.quit()
+        glfw.terminate()
+
+    @staticmethod
+    def check_gl_error():
+        error = gl.glGetError()
+        if error != gl.GL_NO_ERROR:
+            print(f"OpenGL error: {error}")
 
     def main(self) -> None:
         """
-        Main window loop
+        Main window loop.
         """
         while self.running:
             grid = self.simulation.get_grid()
-
             self.render(grid)
             self.tick()
-
+            self.check_gl_error()
             self.handle_window_events()
 
 
