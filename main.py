@@ -38,6 +38,11 @@ class Tile:
 TILES = [Tile("empty", (0, 0, 0)), Tile("solid", (255, 100, 100))]
 TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES])
 
+CAMERA_SPEED = 20
+ZOOM_MULTI = 1.2
+MIN_ZOOM = pow(ZOOM_MULTI, -20)
+MAX_ZOOM = pow(ZOOM_MULTI, 20)
+
 ### Thread Handling ###
 events = {"exit": threading.Event()}
 locks = {}
@@ -63,12 +68,16 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
     x, y = coord
     width, height = size
 
+    print(coord, size)
+
     if x >= array.shape[1] or y >= array.shape[0]:
         return np.zeros((0, 0), dtype=np.uint8)
 
     x_end = min(x + width, array.shape[1])
     y_end = min(y + height, array.shape[0])
-    
+
+    #print(f"{y}:{y_end}, {x}:{x_end}")
+
     cropped_array = array[y:y_end, x:x_end]
     
     return cropped_array
@@ -130,9 +139,8 @@ class Window:
         self.current_size = self.original_size
         self.home_offset = np.array([0, 0])
         self.pos_offset = np.array([0, 0])
-        self.camera_speed = 20
-        self.zoom = 1
-        self.zoom_multi = 1.2
+        self.zoom_offset = np.array([0, 0])
+        self.zoom = 1 
 
         self.window = glfw.create_window(self.screen_width, self.screen_height, "Living Tiles", self.monitor, None)
         if not self.window:
@@ -169,16 +177,14 @@ class Window:
     def resize_grid_surface(self, zoom): # IGNORE
         width, height = self.original_size
 
-        new_width = max(min(round(width * zoom), self.screen_width), 20)
-        new_height = max(min(round(height * zoom), self.screen_height), 20)
+        new_width = max(round(width * zoom), 20)
+        new_height = max(round(height * zoom), round(20 * self.ASPECT_RATIO))
 
-        if new_width / new_height > self.ASPECT_RATIO:
-            new_width = round(new_height * self.ASPECT_RATIO)
-        else:
-            new_height = round(new_width / self.ASPECT_RATIO)
+        if not np.array_equal(self.current_size, (new_width, new_height)):
+            self.zoom_offset[0] += (self.current_size[0] - new_width) / 2
+            self.zoom_offset[1] += (self.current_size[1] - new_height) / 2
 
-        if new_width != self.current_size[0] or new_height != self.current_size[1]:
-            self.current_size = (new_width, new_height)
+            self.current_size = np.array([new_width, new_height])
 
     def handle_window_events(self) -> None:
         """
@@ -194,17 +200,18 @@ class Window:
         if glfw.get_key(self.window, glfw.KEY_S) == glfw.PRESS:
             move_y += 1
         if glfw.get_key(self.window, glfw.KEY_A) == glfw.PRESS:
-            move_x -= 1
-        if glfw.get_key(self.window, glfw.KEY_D) == glfw.PRESS:
             move_x += 1
+        if glfw.get_key(self.window, glfw.KEY_D) == glfw.PRESS:
+            move_x -= 1
 
-        prev_zoom = self.zoom
+        zoom = self.zoom
         if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
-            self.zoom *= self.zoom_multi
+            zoom *= ZOOM_MULTI
         if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
-            self.zoom /= self.zoom_multi
+            zoom /= ZOOM_MULTI
 
-        if self.zoom != prev_zoom:
+        if zoom != self.zoom:
+            self.zoom = min(max(zoom, MIN_ZOOM), MAX_ZOOM)
             self.resize_grid_surface(self.zoom)
 
         length = math.sqrt(move_x ** 2 + move_y ** 2)
@@ -212,8 +219,8 @@ class Window:
             move_x /= length
             move_y /= length
 
-        self.pos_offset[0] += move_x * self.camera_speed
-        self.pos_offset[1] += move_y * self.camera_speed
+        self.pos_offset[0] += (move_x * CAMERA_SPEED) / self.zoom
+        self.pos_offset[1] += (move_y * CAMERA_SPEED) / self.zoom
     
     def render(self, grid) -> None:
         """
@@ -221,26 +228,52 @@ class Window:
         """
         array_height, array_width = grid.shape
 
-        color_array = TILES_COLOUR_LOOKUP[grid]
+        left = self.pos_offset[0] * self.zoom + self.zoom_offset[0]
+        right = left + self.current_size[0]
+        top = self.pos_offset[1] * self.zoom + self.zoom_offset[1]
+        bottom = top + self.current_size[1]
 
-        # Update texture
-        gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, array_width, array_height, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+        pixel_width = self.current_size[0] / array_width
+        pixel_height = self.current_size[1] / array_height
+
+        left_overflow = math.floor(abs(left) / pixel_width) if left < 0 else 0
+        top_overflow = math.floor(abs(top) / pixel_height) if top < 0 else 0
+        right_overflow = math.floor(abs(right - self.screen_width) / pixel_width) if right > self.screen_width else 0
+        bottom_overflow = math.floor(abs(bottom - self.screen_height) / pixel_height) if top > self.screen_height else 0
+
+        cropped_array_x = array_width - left_overflow - right_overflow
+        cropped_array_y = array_height - top_overflow - bottom_overflow
+
+        left += left_overflow * pixel_width
+        right = left + cropped_array_x * pixel_width
+        top += top_overflow * pixel_height
+        bottom = top + cropped_array_y * pixel_height
+
+        cropped_grid = crop_array(grid, (left_overflow, top_overflow), (cropped_array_x, cropped_array_y))
+        color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+
+        #print(max_pixels_x, max_pixels_y)
+        #print(color_array.shape)
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        gl.glBegin(gl.GL_QUADS)
-        gl.glTexCoord2f(0.0, 0.0)
-        gl.glVertex2f(0.0, 0.0)
+        if len(color_array) > 0:
+            # Update texture
+            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
 
-        gl.glTexCoord2f(1.0, 0.0)
-        gl.glVertex2f(self.screen_width, 0.0)
+            gl.glBegin(gl.GL_QUADS)
+            gl.glTexCoord2f(0.0, 0.0)
+            gl.glVertex2f(left, top)
 
-        gl.glTexCoord2f(1.0, 1.0)
-        gl.glVertex2f(self.screen_width, self.screen_height)
+            gl.glTexCoord2f(1.0, 0.0)
+            gl.glVertex2f(right, top)
 
-        gl.glTexCoord2f(0.0, 1.0)
-        gl.glVertex2f(0.0, self.screen_height)
-        gl.glEnd()
+            gl.glTexCoord2f(1.0, 1.0)
+            gl.glVertex2f(right, bottom)
+
+            gl.glTexCoord2f(0.0, 1.0)
+            gl.glVertex2f(left, bottom)
+            gl.glEnd()
 
         glfw.swap_buffers(self.window)
 
