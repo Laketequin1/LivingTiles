@@ -19,6 +19,8 @@ import numpy as np
 import math
 import scipy.ndimage
 
+from PIL import Image
+
 from src import COLOURS
 
 ### Constants ###
@@ -28,7 +30,7 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-GRID_DIMENSIONS = (108, 192)
+GRID_DIMENSIONS = (180, 300)
 
 class Tile:
     def __init__(self, name, colour):
@@ -36,9 +38,9 @@ class Tile:
         self.colour = colour
 
 TILES = [Tile("empty", (0, 0, 0)), Tile("solid", (255, 100, 100))]
-TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES])
+TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES], dtype=np.uint8)
 
-CAMERA_SPEED = 20
+CAMERA_SPEED = 10
 ZOOM_MULTI = 1.2
 MIN_ZOOM = pow(ZOOM_MULTI, -20)
 MAX_ZOOM = pow(ZOOM_MULTI, 20)
@@ -68,7 +70,7 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
     x, y = coord
     width, height = size
 
-    print(coord, size)
+    #print(coord, size)
 
     if x >= array.shape[1] or y >= array.shape[0]:
         return np.zeros((0, 0), dtype=np.uint8)
@@ -113,6 +115,42 @@ class FrameRateMonitor:
         if self.total_elapsed > 1:
             self.print_fps()
 
+def save_array_as_png(array: np.ndarray, filename: str):
+    """
+    Convert a 2D NumPy array of RGB colors to a PNG file using Pillow.
+
+    :param array: 2D NumPy array of shape (height, width, 3) containing RGB color values.
+    :param filename: The filename of the PNG file to save.
+    """
+    # Validate input
+    if not isinstance(array, np.ndarray):
+        raise TypeError("Input array must be a NumPy array.")
+    if array.ndim != 3 or array.shape[2] != 3:
+        raise ValueError("Array must be 3D with shape (height, width, 3) for RGB data.")
+    if array.dtype != np.uint8:
+        raise TypeError("Array dtype must be np.uint8.")
+    
+    # Convert NumPy array to Pillow Image
+    image = Image.fromarray(array, 'RGB')
+    
+    # Save image as PNG
+    image.save(filename, 'PNG')
+
+def save_array_to_text(array: np.ndarray, filename: str):
+    """
+    Save a 2D NumPy array to a text file in a readable format.
+
+    :param array: 2D NumPy array to save.
+    :param filename: Name of the text file to save the array to.
+    """
+    # Validate input
+    if not isinstance(array, np.ndarray):
+        raise TypeError("Input must be a NumPy array.")
+    if array.ndim != 2:
+        raise ValueError("Array must be 2D.")
+    
+    # Save array to text file
+    np.savetxt(filename, array, fmt='%d', delimiter=',', header='Row,Column,Value')
 
 ### Rendering [main thread] ###
 class Window:
@@ -169,12 +207,12 @@ class Window:
 
         gl.glEnable(gl.GL_TEXTURE_2D)
 
-        gl.glDisable(gl.GL_DEPTH_TEST)
-        gl.glDisable(gl.GL_BLEND)
+        #gl.glDisable(gl.GL_DEPTH_TEST)
+        #gl.glDisable(gl.GL_BLEND)
 
         self.fps_monitor = FrameRateMonitor("WINDOW")
 
-    def resize_grid_surface(self, zoom): # IGNORE
+    def resize_grid_surface(self, zoom):
         width, height = self.original_size
 
         new_width = max(round(width * zoom), 20)
@@ -230,35 +268,42 @@ class Window:
 
         left = self.pos_offset[0] * self.zoom + self.zoom_offset[0]
         right = left + self.current_size[0]
-        top = self.pos_offset[1] * self.zoom + self.zoom_offset[1]
-        bottom = top + self.current_size[1]
+        bottom = self.pos_offset[1] * self.zoom + self.zoom_offset[1]
+        top = bottom + self.current_size[1]
 
         pixel_width = self.current_size[0] / array_width
         pixel_height = self.current_size[1] / array_height
 
-        left_overflow = math.floor(abs(left) / pixel_width) if left < 0 else 0
-        top_overflow = math.floor(abs(top) / pixel_height) if top < 0 else 0
-        right_overflow = math.floor(abs(right - self.screen_width) / pixel_width) if right > self.screen_width else 0
-        bottom_overflow = math.floor(abs(bottom - self.screen_height) / pixel_height) if top > self.screen_height else 0
+        left_overflow = min(math.floor(- left / pixel_width), array_width) if left < 0 else 0
+        bottom_overflow = min(math.floor(- bottom / pixel_height), array_height) if bottom < 0 else 0
+        right_overflow = min(math.floor((right - self.screen_width) / pixel_width), array_width) if right > self.screen_width else 0
+        top_overflow = min(math.floor((top - self.screen_height) / pixel_height), array_height) if top > self.screen_height else 0
 
         cropped_array_x = array_width - left_overflow - right_overflow
         cropped_array_y = array_height - top_overflow - bottom_overflow
 
         left += left_overflow * pixel_width
         right = left + cropped_array_x * pixel_width
-        top += top_overflow * pixel_height
-        bottom = top + cropped_array_y * pixel_height
+        bottom += bottom_overflow * pixel_height
+        top = bottom + cropped_array_y * pixel_height
 
         cropped_grid = crop_array(grid, (left_overflow, top_overflow), (cropped_array_x, cropped_array_y))
+
         color_array = TILES_COLOUR_LOOKUP[cropped_grid]
 
-        #print(max_pixels_x, max_pixels_y)
-        #print(color_array.shape)
+        save_array_as_png(color_array, 'output_image.png')
+        save_array_to_text(cropped_grid, 'array_output.txt')
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
-        if len(color_array) > 0:
+        if cropped_array_x or cropped_array_y:
             # Update texture
+            gl.glRasterPos2i(0, 0)
+            print(cropped_array_x)
+            print(cropped_array_y)
+            print(color_array.shape)
+            gl.glDrawPixels(cropped_array_x, cropped_array_y, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+            """
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
 
             gl.glBegin(gl.GL_QUADS)
@@ -274,10 +319,13 @@ class Window:
             gl.glTexCoord2f(0.0, 1.0)
             gl.glVertex2f(left, bottom)
             gl.glEnd()
+            """
 
         glfw.swap_buffers(self.window)
 
         #gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
+
+        time.sleep(0.68)
 
     def tick(self) -> None:
         """
