@@ -21,8 +21,10 @@ import scipy.ndimage
 try:
     import cupy as cp
     CUPY_SUPPORTED = True
+    XP = cp
 except ImportError:
     CUPY_SUPPORTED = False
+    XP = np
     print("CUPY NOT SUPPORTED")
 
 from PIL import Image
@@ -36,15 +38,15 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-GRID_DIMENSIONS = (180, 300)
+GRID_DIMENSIONS = (1080, 1920) # (HEIGHT, WIDTH)
 
 class Tile:
     def __init__(self, name, colour):
         self.name = name
         self.colour = colour
 
-TILES = [Tile("empty", (0.0, 0.0, 0.0)), Tile("solid", (1.0, 0.4, 0.4))]
-TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES], dtype=np.uint8)
+TILES = [Tile("empty", (0.0, 0.0, 0.0)), Tile("solid", (1.0, 0.3, 0.3))]
+TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES], dtype=np.float16)
 
 CAMERA_SPEED = 10
 ZOOM_MULTI = 1.2
@@ -144,9 +146,11 @@ class Window:
         self.original_size = np.array([self.screen_width, self.screen_height])
         self.current_size = self.original_size
         self.home_offset = np.array([0, 0])
-        self.pos_offset = np.array([0, 0])
+        self.pos_offset = np.array([0, 0], dtype=np.float32)
         self.zoom_offset = np.array([0, 0])
         self.zoom = 1 
+
+        self.prev_grid = np.zeros((0, 0), dtype=np.uint8)
 
         self.window = glfw.create_window(self.screen_width, self.screen_height, "Living Tiles", self.monitor, None)
         if not self.window:
@@ -260,12 +264,33 @@ class Window:
 
         cropped_grid = crop_array(grid, (left_overflow, top_overflow), (cropped_array_x, cropped_array_y))
 
-        color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+        #mask_grid = (self.prev_grid != cropped_grid)
 
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
         if cropped_array_x or cropped_array_y:
+            start = time.time()
+
+            print(type(TILES_COLOUR_LOOKUP), type(cropped_grid))
+
+            #color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+            color_array = cp.asnumpy(cp.asarray(TILES_COLOUR_LOOKUP)[cp.asarray(cropped_grid)]) # VERY GOOD
+
+            end = time.time()
+            duration = end-start
+            if duration:
+                print(f"FPS: {1 / duration}")
+
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
+
+            """
+            if self.prev_grid.shape != cropped_grid.shape:
+                color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
+            else:
+                color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+                gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
+            """
 
             gl.glBegin(gl.GL_QUADS)
             gl.glTexCoord2f(0.0, 0.0)
@@ -282,6 +307,8 @@ class Window:
             gl.glEnd()
             
         glfw.swap_buffers(self.window)
+
+        #self.prev_grid = cropped_grid
 
     def tick(self) -> None:
         """
@@ -365,26 +392,15 @@ class Simulation:
             self.grid[mouth_y, mouth_start_x:mouth_start_x + mouth_width] = 1
 
     def update(self):
-        if CUPY_SUPPORTED:
-            with self.lock:
-                current_grid = cp.array(self.grid)
+        with self.lock:
+            current_grid = XP.array(self.grid, dtype=XP.uint8)
 
-                neighbors = sum(cp.roll(cp.roll(current_grid, i, axis=0), j, axis=1) 
-                                for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
+            neighbors = sum(XP.roll(XP.roll(current_grid, i, axis=0), j, axis=1)
+                            for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
 
-                new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
+            new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
 
-                self.grid = cp.asnumpy(new_grid.astype(cp.uint8))
-        else:
-            with self.lock:
-                current_grid = np.array(self.grid)
-
-                neighbors = sum(np.roll(np.roll(current_grid, i, axis=0), j, axis=1) 
-                    for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
-
-                new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
-
-                self.grid = new_grid.astype(np.uint8)
+            self.grid = XP.asnumpy(new_grid.astype(XP.uint8)) if CUPY_SUPPORTED else new_grid.astype(np.uint8)
 
     def get_grid(self):
         with self.lock:
@@ -396,15 +412,10 @@ class Simulation:
 
     def main(self):
         while self.running:
-            #self.randomize()
             self.update()
 
             if self.events["exit"].is_set():
                 self.running = False
-
-            #self.fps_monitor.run()
-
-            #time.sleep(0.03)
 
 ### Entry point ###
 def main():
