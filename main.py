@@ -11,13 +11,18 @@ import math
 import numpy as np
 import scipy
 import skimage
-import cupy as cp
 
 import glfw
 import OpenGL.GL as gl
 import numpy as np
 import math
 import scipy.ndimage
+
+try:
+    import cupy as cp
+    CUPY_SUPPORTED = True
+except ImportError:
+    CUPY_SUPPORTED = False
 
 from PIL import Image
 
@@ -95,7 +100,8 @@ class FrameRateMonitor:
 
     def print_fps(self):
         fps = len(self.frame_times) / self.total_elapsed
-        print(f"[{self.name}] FPS: {round(fps, 3)} LOW: {round(len(self.frame_times) / (max(self.frame_times) * len(self.frame_times)), 3)} HIGH: {round(len(self.frame_times) / (min(self.frame_times) * len(self.frame_times)), 3)}")
+        if len(self.frame_times):
+            print(f"[{self.name}] FPS: {round(fps, 3)} LOW: {round(len(self.frame_times) / (max(self.frame_times) * len(self.frame_times)), 3)} HIGH: {round(len(self.frame_times) / (min(self.frame_times)+0.001 * len(self.frame_times)), 3)}")
 
         self.frame_times = []
         self.total_elapsed = 0
@@ -242,6 +248,9 @@ class Window:
         if glfw.get_key(self.window, glfw.KEY_D) == glfw.PRESS:
             move_x -= 1
 
+        if glfw.get_key(self.window, glfw.KEY_SPACE) == glfw.PRESS:
+            self.simulation.randomize()
+
         zoom = self.zoom
         if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
             zoom *= ZOOM_MULTI
@@ -297,6 +306,7 @@ class Window:
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
         if cropped_array_x or cropped_array_y:
+            """
             # Update texture
             gl.glRasterPos2i(0, 0)
             print(cropped_array_x)
@@ -319,13 +329,13 @@ class Window:
             gl.glTexCoord2f(0.0, 1.0)
             gl.glVertex2f(left, bottom)
             gl.glEnd()
-            """
+            
 
         glfw.swap_buffers(self.window)
 
         #gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
 
-        time.sleep(0.68)
+        #time.sleep(0.68)
 
     def tick(self) -> None:
         """
@@ -380,17 +390,55 @@ class Simulation:
         with self.lock:
             self.grid = np.random.randint(0, 2, size=self.grid_dimensions, dtype=np.uint8)
 
+    def draw_face(self):
+        """
+        Draws a simple face on the grid with three lines: eyes and a mouth.
+        """
+        with self.lock:
+            # Create a blank grid
+            self.grid[:] = 0  # Clear the grid before drawing
+
+            height, width = self.grid.shape
+
+            # Define the size and position of the face components
+            eye_size = 3
+            eye_y = height // 3
+            eye_x_left = width // 3
+            eye_x_right = 2 * width // 3
+
+            mouth_y = 2 * height // 3
+            mouth_width = width // 3
+            mouth_height = 2
+
+            # Draw eyes
+            self.grid[eye_y:eye_y + eye_size, eye_x_left:eye_x_left + eye_size] = 1  # Left eye
+            self.grid[eye_y:eye_y + eye_size, eye_x_right:eye_x_right + eye_size] = 1  # Right eye
+
+            # Draw mouth
+            mouth_start_x = (width - mouth_width) // 2
+            self.grid[mouth_y, mouth_start_x:mouth_start_x + mouth_width] = 1
+
     def update(self):
-        with self.lock:
-            current_grid = cp.array(self.grid)
+        if CUPY_SUPPORTED:
+            with self.lock:
+                current_grid = cp.array(self.grid)
 
-        neighbors = sum(cp.roll(cp.roll(current_grid, i, axis=0), j, axis=1) 
-                        for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
+                neighbors = sum(cp.roll(cp.roll(current_grid, i, axis=0), j, axis=1) 
+                                for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
 
-        new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
+                new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
 
-        with self.lock:
-            self.grid = cp.asnumpy(new_grid.astype(cp.uint8))
+                self.grid = cp.asnumpy(new_grid.astype(cp.uint8))
+        else:
+            with self.lock:
+                current_grid = np.array(self.grid)
+
+                neighbors = sum(np.roll(np.roll(current_grid, i, axis=0), j, axis=1) 
+                    for i in (-1, 0, 1) for j in (-1, 0, 1) if (i != 0 or j != 0))
+
+                new_grid = (neighbors == 3) | ((current_grid == 1) & (neighbors == 2))
+
+                self.grid = new_grid.astype(np.uint8)
 
     def get_grid(self):
         with self.lock:
@@ -410,7 +458,7 @@ class Simulation:
 
             #self.fps_monitor.run()
 
-            #time.sleep(0)
+            #time.sleep(0.03)
 
 ### Entry point ###
 def main():
