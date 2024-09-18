@@ -23,6 +23,7 @@ try:
     CUPY_SUPPORTED = True
 except ImportError:
     CUPY_SUPPORTED = False
+    print("CUPY NOT SUPPORTED")
 
 from PIL import Image
 
@@ -42,7 +43,7 @@ class Tile:
         self.name = name
         self.colour = colour
 
-TILES = [Tile("empty", (0, 0, 0)), Tile("solid", (255, 100, 100))]
+TILES = [Tile("empty", (0.0, 0.0, 0.0)), Tile("solid", (1.0, 0.4, 0.4))]
 TILES_COLOUR_LOOKUP = np.array([tile.colour for tile in TILES], dtype=np.uint8)
 
 CAMERA_SPEED = 10
@@ -75,15 +76,11 @@ def crop_array(array: np.ndarray, coord: tuple, size: tuple) -> np.ndarray:
     x, y = coord
     width, height = size
 
-    #print(coord, size)
-
     if x >= array.shape[1] or y >= array.shape[0]:
         return np.zeros((0, 0), dtype=np.uint8)
 
     x_end = min(x + width, array.shape[1])
     y_end = min(y + height, array.shape[0])
-
-    #print(f"{y}:{y_end}, {x}:{x_end}")
 
     cropped_array = array[y:y_end, x:x_end]
     
@@ -99,9 +96,10 @@ class FrameRateMonitor:
         self.total_elapsed = 0
 
     def print_fps(self):
-        fps = len(self.frame_times) / self.total_elapsed
-        if len(self.frame_times):
-            print(f"[{self.name}] FPS: {round(fps, 3)} LOW: {round(len(self.frame_times) / (max(self.frame_times) * len(self.frame_times)), 3)} HIGH: {round(len(self.frame_times) / (min(self.frame_times)+0.001 * len(self.frame_times)), 3)}")
+        if len(self.frame_times) and self.total_elapsed:
+            fps = len(self.frame_times) / self.total_elapsed
+
+            print(f"[{self.name}] FPS: {round(fps, 3)} LOW: {round(len(self.frame_times) / (max(*self.frame_times, 0.001) * len(self.frame_times)), 3)} HIGH: {round(len(self.frame_times) / (max(min(self.frame_times), 0.001) * len(self.frame_times)), 3)}")
 
         self.frame_times = []
         self.total_elapsed = 0
@@ -121,42 +119,6 @@ class FrameRateMonitor:
         if self.total_elapsed > 1:
             self.print_fps()
 
-def save_array_as_png(array: np.ndarray, filename: str):
-    """
-    Convert a 2D NumPy array of RGB colors to a PNG file using Pillow.
-
-    :param array: 2D NumPy array of shape (height, width, 3) containing RGB color values.
-    :param filename: The filename of the PNG file to save.
-    """
-    # Validate input
-    if not isinstance(array, np.ndarray):
-        raise TypeError("Input array must be a NumPy array.")
-    if array.ndim != 3 or array.shape[2] != 3:
-        raise ValueError("Array must be 3D with shape (height, width, 3) for RGB data.")
-    if array.dtype != np.uint8:
-        raise TypeError("Array dtype must be np.uint8.")
-    
-    # Convert NumPy array to Pillow Image
-    image = Image.fromarray(array, 'RGB')
-    
-    # Save image as PNG
-    image.save(filename, 'PNG')
-
-def save_array_to_text(array: np.ndarray, filename: str):
-    """
-    Save a 2D NumPy array to a text file in a readable format.
-
-    :param array: 2D NumPy array to save.
-    :param filename: Name of the text file to save the array to.
-    """
-    # Validate input
-    if not isinstance(array, np.ndarray):
-        raise TypeError("Input must be a NumPy array.")
-    if array.ndim != 2:
-        raise ValueError("Array must be 2D.")
-    
-    # Save array to text file
-    np.savetxt(filename, array, fmt='%d', delimiter=',', header='Row,Column,Value')
 
 ### Rendering [main thread] ###
 class Window:
@@ -213,8 +175,8 @@ class Window:
 
         gl.glEnable(gl.GL_TEXTURE_2D)
 
-        #gl.glDisable(gl.GL_DEPTH_TEST)
-        #gl.glDisable(gl.GL_BLEND)
+        gl.glDisable(gl.GL_DEPTH_TEST)
+        gl.glDisable(gl.GL_BLEND)
 
         self.fps_monitor = FrameRateMonitor("WINDOW")
 
@@ -300,21 +262,10 @@ class Window:
 
         color_array = TILES_COLOUR_LOOKUP[cropped_grid]
 
-        save_array_as_png(color_array, 'output_image.png')
-        save_array_to_text(cropped_grid, 'array_output.txt')
-
         gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
         if cropped_array_x or cropped_array_y:
-            """
-            # Update texture
-            gl.glRasterPos2i(0, 0)
-            print(cropped_array_x)
-            print(cropped_array_y)
-            print(color_array.shape)
-            gl.glDrawPixels(cropped_array_x, cropped_array_y, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
-            """
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_UNSIGNED_BYTE, color_array)
+            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
 
             gl.glBegin(gl.GL_QUADS)
             gl.glTexCoord2f(0.0, 0.0)
@@ -330,12 +281,7 @@ class Window:
             gl.glVertex2f(left, bottom)
             gl.glEnd()
             
-
         glfw.swap_buffers(self.window)
-
-        #gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
-
-        #time.sleep(0.68)
 
     def tick(self) -> None:
         """
