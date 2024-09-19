@@ -38,7 +38,9 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-GRID_DIMENSIONS = (1080, 1920) # (HEIGHT, WIDTH)
+#print(SCREEN_WIDTH, SCREEN_HEIGHT)
+
+GRID_DIMENSIONS = (SCREEN_WIDTH, SCREEN_HEIGHT) # (HEIGHT, WIDTH)
 
 class Tile:
     def __init__(self, name, colour):
@@ -271,10 +273,10 @@ class Window:
         if cropped_array_x or cropped_array_y:
             start = time.time()
 
-            print(type(TILES_COLOUR_LOOKUP), type(cropped_grid))
-
-            #color_array = TILES_COLOUR_LOOKUP[cropped_grid]
-            color_array = cp.asnumpy(cp.asarray(TILES_COLOUR_LOOKUP)[cp.asarray(cropped_grid)]) # VERY GOOD
+            if CUPY_SUPPORTED:
+                color_array = cp.asnumpy(cp.asarray(TILES_COLOUR_LOOKUP)[cp.asarray(cropped_grid)]) # VERY GOOD
+            else:
+                color_array = TILES_COLOUR_LOOKUP[cropped_grid]
 
             end = time.time()
             duration = end-start
