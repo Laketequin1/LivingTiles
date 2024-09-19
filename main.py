@@ -38,9 +38,11 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
+print(SCREEN_HEIGHT * 6 * SCREEN_WIDTH * 6)
+
 #print(SCREEN_WIDTH, SCREEN_HEIGHT)
 
-GRID_DIMENSIONS = (SCREEN_WIDTH, SCREEN_HEIGHT) # (HEIGHT, WIDTH)
+GRID_DIMENSIONS = (SCREEN_HEIGHT * 6, SCREEN_WIDTH * 6) # (HEIGHT, WIDTH)
 
 class Tile:
     def __init__(self, name, colour):
@@ -278,12 +280,12 @@ class Window:
             else:
                 color_array = TILES_COLOUR_LOOKUP[cropped_grid]
 
+            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
+
             end = time.time()
             duration = end-start
             if duration:
                 print(f"FPS: {1 / duration}")
-
-            gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
 
             """
             if self.prev_grid.shape != cropped_grid.shape:
@@ -418,6 +420,8 @@ class Simulation:
 
             if self.events["exit"].is_set():
                 self.running = False
+            
+            self.fps_monitor.run()
 
 ### Entry point ###
 def main():
