@@ -11,6 +11,11 @@ import math
 import numpy as np
 import scipy
 import skimage
+import ctypes
+
+import pycuda.autoinit
+from pycuda import gpuarray
+import pycuda.driver as cuda
 
 import glfw
 import OpenGL.GL as gl
@@ -38,11 +43,9 @@ FPS = 60
 SCREEN_WIDTH = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
 SCREEN_HEIGHT = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
 
-print(SCREEN_HEIGHT * 6 * SCREEN_WIDTH * 6)
-
 #print(SCREEN_WIDTH, SCREEN_HEIGHT)
 
-GRID_DIMENSIONS = (SCREEN_HEIGHT * 6, SCREEN_WIDTH * 6) # (HEIGHT, WIDTH)
+GRID_DIMENSIONS = (SCREEN_HEIGHT * 2, SCREEN_WIDTH * 2) # (HEIGHT, WIDTH)
 
 class Tile:
     def __init__(self, name, colour):
@@ -67,6 +70,7 @@ def exit_handler() -> None:
     Runs before main threads terminates.
     """
     events["exit"].set()
+    glfw.terminate()
 
 atexit.register(exit_handler)
 
@@ -173,7 +177,6 @@ class Window:
         gl.glLoadIdentity()
 
         self.texture = gl.glGenTextures(1)
-
         gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture)
 
         gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_CLAMP_TO_EDGE)
@@ -275,10 +278,12 @@ class Window:
         if cropped_array_x or cropped_array_y:
             start = time.time()
 
-            if CUPY_SUPPORTED:
-                color_array = cp.asnumpy(cp.asarray(TILES_COLOUR_LOOKUP)[cp.asarray(cropped_grid)]) # VERY GOOD
+            if CUPY_SUPPORTED: # cp.asnumpy
+                color_array = cp.asarray(TILES_COLOUR_LOOKUP)[cp.asarray(cropped_grid)]
             else:
                 color_array = TILES_COLOUR_LOOKUP[cropped_grid]
+
+            cp.asarray(color_array)
 
             gl.glTexImage2D(gl.GL_TEXTURE_2D, 0, gl.GL_RGB, cropped_array_x, cropped_array_y, 0, gl.GL_RGB, gl.GL_FLOAT, color_array)
 
